@@ -96,6 +96,20 @@ public class KdeProgressBackend : IProgressBackend
             await _job.SetInfoAsync(message);
         }
     }
+
+    /// <summary>
+    /// Updates the progress notification with a set of properties.
+    /// </summary>
+    /// <param name="properties">The properties to update for the progress notification.</param>
+    /// <exception cref="ObjectDisposedException"></exception>
+    /// <exception cref="InvalidOperationException"></exception>
+    public async Task UpdateAsync(IDictionary<string, object> properties)
+    {
+        if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
+        if (_job == null) throw new InvalidOperationException("No progress notification is running.");
+
+        await _job.UpdateAsync(properties);
+    }
     
     /// <summary>
     /// Updates the total and processed amounts for the progress notification, along with an optional <see cref="KdeJobUnit"/> unit.

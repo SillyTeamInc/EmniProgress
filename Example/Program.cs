@@ -13,16 +13,24 @@ public class Program
     {
         await using var progress = (CompositeProgressBackend)EmniFactory.Create();
 
-        await progress.StartAsync("Example", "Progress", "ExampleApp");
-        await Task.Delay(1000);
+        await progress.StartAsync("Uploading", "Progress", "ExampleApp", "system-software-update");
+        await Task.Delay(3000);
         for (int i = 0; i <= 99; i++)
         {
-            progress.GetBackend<KdeProgressBackend>()?.SetDestUrlAsync($"https://ratted.systems/emi");
-            await progress.UpdateAsync(i, $"Uploading");
-            await Task.Delay(50);
+            KdeProgressBackend? kde = progress.GetBackend<KdeProgressBackend>();
+            kde?.SetDestUrlAsync($"https://ratted.systems/u/fmsO87.txt");
+            var updates = new Dictionary<string, object>
+            {
+                { "percent", (uint)i },
+                { "infoMessage", "to https://ratted.systems/u/fmsO87.txt" },
+                { "speed", 1024000uL } // 1 MB/s
+            };
+            await kde?.UpdateAsync(updates)!;
+            await Task.Delay(200);
         }
 
-        await progress.UpdateAsync(99, "Uploaded!");
-        await progress.FinishAsync(true, "Done");
+        progress.GetBackend<KdeProgressBackend>()?.SetDestUrlAsync($"file:///home/emi/Desktop");
+        await progress.UpdateAsync(100, "Uploaded!");
+        await progress.FinishAsync(true, "Copied to clipboard!");
     }
 }

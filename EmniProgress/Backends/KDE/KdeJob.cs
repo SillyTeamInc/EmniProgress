@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Tmds.DBus;
 namespace EmniProgress.Backends.KDE;
 
@@ -94,6 +95,7 @@ public sealed class KdeJob : IAsyncDisposable
             { "application-icon", iconName ?? string.Empty },
             { "description", description },
             { "percent", (uint)0 },
+            { "transient", false },
         };
 
         ObjectPath jobPath = await serverV2.requestViewAsync(
@@ -116,7 +118,15 @@ public sealed class KdeJob : IAsyncDisposable
             OnCancelRequested = onCancelRequested,
         };
         
+        Debug.WriteLine($"[emni] KDE Job created at {jobPath} with service {uniqueOwner}");
+        
         return job;
+    }
+    
+    public Task UpdateAsync(IDictionary<string, object> properties)
+    {
+        if (_finished) return Task.CompletedTask;
+        return _jobV3.updateAsync(properties);
     }
     
     public Task UpdatePercentAsync(int percent)
