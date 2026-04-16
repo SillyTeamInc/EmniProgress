@@ -7,6 +7,7 @@
 
         <PackageId>EmniProgress</PackageId>
 
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <PackageLicenseExpression>Unlicense</PackageLicenseExpression>
 
         <MinVerTagPrefix>v</MinVerTagPrefix>
