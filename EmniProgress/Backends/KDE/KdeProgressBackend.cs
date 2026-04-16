@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Runtime.CompilerServices;
 using EmniProgress.Core;
 
 namespace EmniProgress.Backends.KDE;
@@ -7,6 +9,8 @@ namespace EmniProgress.Backends.KDE;
 /// </summary>
 public class KdeProgressBackend : IProgressBackend
 {
+    private static readonly TimeSpan CallTimeout = TimeSpan.FromSeconds(5);
+
     private KdeJob? _job;
     private bool _disposed;
 
@@ -15,6 +19,22 @@ public class KdeProgressBackend : IProgressBackend
     private Func<Task>? _queuedOnSuspendRequested = null;
     private Func<Task>? _queuedOnResumeRequested = null;
 
+    private static async Task WithTimeout(Task task, [CallerMemberName] string caller = "")
+    {
+        using var cts = new CancellationTokenSource(CallTimeout);
+        var completed = await Task.WhenAny(task, Task.Delay(Timeout.Infinite, cts.Token))
+            .ConfigureAwait(false);
+
+        if (completed == task)
+        {
+            await task.ConfigureAwait(false); // propagate any real exceptions
+        }
+        else
+        {
+            Debug.WriteLine($"[emni] KDE DBus call timed out in {caller}, KDE may have crashed.");
+        }
+    }
+    
     /// <summary>
     /// Sets the callback to be invoked when the user requests cancellation of the job.
     /// </summary>
@@ -26,13 +46,10 @@ public class KdeProgressBackend : IProgressBackend
     public void OnCancel(Func<Task>? onCancelRequested)
     {
         if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
-
         _queuedOnCancelRequested = onCancelRequested;
-
-        int newCapabilities = _queuedOnCancelRequested != null
+        _queuedCapabilities = _queuedOnCancelRequested != null
             ? _queuedCapabilities | KdeJobCapabilities.Killable
             : _queuedCapabilities & ~KdeJobCapabilities.Killable;
-        _queuedCapabilities = newCapabilities;
     }
 
     /// <summary>
@@ -46,13 +63,10 @@ public class KdeProgressBackend : IProgressBackend
     public void OnSuspend(Func<Task>? onSuspendRequested)
     {
         if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
-
         _queuedOnSuspendRequested = onSuspendRequested;
-
-        int newCapabilities = _queuedOnSuspendRequested != null
+        _queuedCapabilities = _queuedOnSuspendRequested != null
             ? _queuedCapabilities | KdeJobCapabilities.Suspendable
             : _queuedCapabilities & ~KdeJobCapabilities.Suspendable;
-        _queuedCapabilities = newCapabilities;
     }
 
     /// <summary>
@@ -66,42 +80,48 @@ public class KdeProgressBackend : IProgressBackend
     public void OnResume(Func<Task>? onResumeRequested)
     {
         if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
-
         _queuedOnResumeRequested = onResumeRequested;
-
-        int newCapabilities = _queuedOnResumeRequested != null
+        _queuedCapabilities = _queuedOnResumeRequested != null
             ? _queuedCapabilities | KdeJobCapabilities.Suspendable
             : _queuedCapabilities & ~KdeJobCapabilities.Suspendable;
-        _queuedCapabilities = newCapabilities;
     }
 
-    /// <inheritdoc/>
+    /// <inheritdoc />
     public async Task StartAsync(string title, string description, string appName = "", string? iconName = null)
     {
         if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
         if (_job != null) throw new InvalidOperationException("A progress notification is already running.");
 
-        _job = await KdeJob.StartAsync(title, description, appName, iconName, _queuedCapabilities,
+        using var cts = new CancellationTokenSource(CallTimeout);
+        var startTask = KdeJob.StartAsync(title, description, appName, iconName, _queuedCapabilities,
             _queuedOnSuspendRequested, _queuedOnResumeRequested, _queuedOnCancelRequested);
+
+        var completed = await Task.WhenAny(startTask, Task.Delay(Timeout.Infinite, cts.Token))
+            .ConfigureAwait(false);
+
+        if (completed != startTask)
+        {
+            Debug.WriteLine("[emni] KDE StartAsync timed out, KDE may have crashed.");
+            return;
+        }
+
+        _job = await startTask.ConfigureAwait(false);
         _queuedCapabilities = 0;
         _queuedOnCancelRequested = null;
         _queuedOnSuspendRequested = null;
         _queuedOnResumeRequested = null;
     }
 
-    
-    /// <inheritdoc/>
+    /// <inheritdoc />
     public async Task UpdateAsync(float value, string? message = null)
     {
         if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
         if (_job == null) throw new InvalidOperationException("No progress notification is running.");
-        
+
         int percent = (int)Math.Round(value);
-        await _job.UpdatePercentAsync(percent);
+        await WithTimeout(_job.UpdatePercentAsync(percent)).ConfigureAwait(false);
         if (message != null)
-        {
-            await _job.SetInfoAsync(message);
-        }
+            await WithTimeout(_job.SetInfoAsync(message)).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -114,8 +134,7 @@ public class KdeProgressBackend : IProgressBackend
     {
         if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
         if (_job == null) throw new InvalidOperationException("No progress notification is running.");
-
-        await _job.UpdateAsync(properties);
+        await WithTimeout(_job.UpdateAsync(properties)).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -130,9 +149,8 @@ public class KdeProgressBackend : IProgressBackend
     {
         if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
         if (_job == null) throw new InvalidOperationException("No progress notification is running.");
-
-        await _job.SetTotalAmountAsync(total, unit);
-        await _job.SetProcessedAmountAsync(processed, unit);
+        await WithTimeout(_job.SetTotalAmountAsync(total, unit)).ConfigureAwait(false);
+        await WithTimeout(_job.SetProcessedAmountAsync(processed, unit)).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -145,8 +163,7 @@ public class KdeProgressBackend : IProgressBackend
     {
         if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
         if (_job == null) throw new InvalidOperationException("No progress notification is running.");
-
-        await _job.SetSpeedAsync(bytesPerSecond);
+        await WithTimeout(_job.SetSpeedAsync(bytesPerSecond)).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -164,8 +181,7 @@ public class KdeProgressBackend : IProgressBackend
     {
         if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
         if (_job == null) throw new InvalidOperationException("No progress notification is running.");
-
-        await _job.SetDescriptionFieldAsync(number, name, value);
+        await WithTimeout(_job.SetDescriptionFieldAsync(number, name, value)).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -178,8 +194,7 @@ public class KdeProgressBackend : IProgressBackend
     {
         if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
         if (_job == null) throw new InvalidOperationException("No progress notification is running.");
-
-        await _job.ClearDescriptionFieldAsync(number);
+        await WithTimeout(_job.ClearDescriptionFieldAsync(number)).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -192,8 +207,7 @@ public class KdeProgressBackend : IProgressBackend
     {
         if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
         if (_job == null) throw new InvalidOperationException("No progress notification is running.");
-
-        await _job.SetSuspendedAsync(suspended);
+        await WithTimeout(_job.SetSuspendedAsync(suspended)).ConfigureAwait(false);
     }
     
     /// <summary>
@@ -206,8 +220,7 @@ public class KdeProgressBackend : IProgressBackend
     {
         if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
         if (_job == null) throw new InvalidOperationException("No progress notification is running.");
-
-        await _job.SetDestUrlAsync(destUrl);
+        await WithTimeout(_job.SetDestUrlAsync(destUrl)).ConfigureAwait(false);
     }
 
     /// <inheritdoc/>
@@ -216,16 +229,12 @@ public class KdeProgressBackend : IProgressBackend
         if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
         if (_job == null) throw new InvalidOperationException("No progress notification is running.");
 
-        if (!success)
-        {
-            await _job.FailAsync(message ?? string.Empty);
-        }
-        else
-        {
-            await _job.FinishAsync(message);
-        }
-        
-        await _job.DisposeAsync();
+        var finishTask = success
+            ? _job.FinishAsync(message)
+            : _job.FailAsync(message ?? string.Empty);
+
+        await WithTimeout(finishTask).ConfigureAwait(false);
+        await _job.DisposeAsync().ConfigureAwait(false);
         _job = null;
     }
     
@@ -238,8 +247,8 @@ public class KdeProgressBackend : IProgressBackend
         if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
         if (_job == null) throw new InvalidOperationException("No progress notification is running.");
 
-        await _job.FailAsync(message ?? "Cancelled", silent: true);
-        await _job.DisposeAsync();
+        await WithTimeout(_job.FailAsync(message ?? "Cancelled", silent: true)).ConfigureAwait(false);
+        await _job.DisposeAsync().ConfigureAwait(false);
         _job = null;
     }
 
