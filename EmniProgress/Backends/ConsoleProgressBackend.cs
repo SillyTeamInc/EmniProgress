@@ -10,16 +10,20 @@ public sealed class ConsoleProgressBackend : IProgressBackend
     public Task StartAsync(string title, string description, string appName = "", string iconPath = "")
     {
         _title = title;
-        Console.WriteLine($"[{appName}] {title}: {description}");
+        Console.WriteLine($"[{appName}] {title}{(string.IsNullOrEmpty(description) ? "" : $": {description}")}");
         return Task.CompletedTask;
     }
+    
+    private string _previousUpdate = "";
 
     /// <inheritdoc/>
     public Task UpdateAsync(float value, string? message = null)
     {
         int filled = (int)(value / 5);
         var bar = new string('█', filled) + new string('░', 20 - filled);
-        Console.Write($"\r[{bar}] {value:F0}%  {message ?? _title}   ");
+        string clear = new string(' ', _previousUpdate.Length);
+        _previousUpdate = $"[{bar}] {value:F0}%  {message ?? _title}   ";
+        Console.Write($"\r{clear}\r{_previousUpdate}");
         return Task.CompletedTask;
     }
 

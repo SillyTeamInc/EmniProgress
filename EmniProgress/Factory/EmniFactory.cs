@@ -12,8 +12,21 @@ public static class EmniFactory
         new ConsoleProgressBackendProvider(),
     };
 
-    public static void Register(IProgressBackendProvider provider) => _providers.Add(provider);
+    /// <summary>
+    /// Registers a custom progress backend provider.
+    /// If a provider of the same type already exists, it will be replaced.
+    /// </summary>
+    /// <param name="provider">The provider to register.</param>
+    public static void Register(IProgressBackendProvider provider)
+    {
+        _providers.RemoveAll(p => p.GetType() == provider.GetType());
+        _providers.Add(provider);
+    }
 
+    /// <summary>
+    /// Creates a progress backend based on the available providers and their priorities.
+    /// </summary>
+    /// <returns>A composite progress backend that includes the preferred backend and the console backend as a fallback.</returns>
     public static IProgressBackend Create()
     {
         var preferred = _providers
@@ -24,7 +37,9 @@ public static class EmniFactory
         var console = new ConsoleProgressBackend();
 
         if (preferred == null)
-            return console;
+        {
+            return new CompositeProgressBackend(console);
+        }
 
         return new CompositeProgressBackend(preferred.Create(), console);
     }

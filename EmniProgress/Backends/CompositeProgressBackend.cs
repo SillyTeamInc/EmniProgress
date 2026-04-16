@@ -17,6 +17,11 @@ public class CompositeProgressBackend(params IProgressBackend[] backends) : IPro
 
     public Task FinishAsync(bool success = true, string? message = null) =>
         Task.WhenAll(backends.Select(b => b.FinishAsync(success, message)));
+    
+    public T? GetBackend<T>() where T : class, IProgressBackend
+    {
+        return backends.OfType<T>().FirstOrDefault();
+    }
 
     public Task CancelAsync(string? message = null)
     {
