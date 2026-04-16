@@ -6,7 +6,6 @@
         <Nullable>enable</Nullable>
 
         <PackageId>EmniProgress</PackageId>
-        <PackageReadmeFile>README.md</PackageReadmeFile>
 
         <PackageLicenseExpression>Unlicense</PackageLicenseExpression>
 
