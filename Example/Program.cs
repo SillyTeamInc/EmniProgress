@@ -9,24 +9,29 @@ namespace Example;
 
 public class Program
 {
+    private static bool Cancelled = false;
     static async Task Main(string[] args)
     {
         await using var progress = (CompositeProgressBackend)EmniFactory.Create();
-
+        var kde = progress.GetBackend<KdeProgressBackend>();
+        kde?.OnCancel(() =>
+        {
+            Cancelled = true;
+            return Task.CompletedTask;
+        });
+        
         await progress.StartAsync("Uploading", "Progress", "ExampleApp", "system-software-update");
         await Task.Delay(3000);
         for (int i = 0; i <= 99; i++)
         {
-            KdeProgressBackend? kde = progress.GetBackend<KdeProgressBackend>();
             kde?.SetDestUrlAsync($"https://ratted.systems/u/fmsO87.txt");
-            var updates = new Dictionary<string, object>
-            {
-                { "percent", (uint)i },
-                { "infoMessage", "to https://ratted.systems/u/fmsO87.txt" },
-                { "speed", 1024000uL } // 1 MB/s
-            };
-            await kde?.UpdateAsync(updates)!;
+            await progress.UpdateAsync(i, $"Uploading");
             await Task.Delay(200);
+            if (Cancelled)
+            {
+                await progress.CancelAsync("Upload cancelled by user.");
+                return;
+            }
         }
 
         progress.GetBackend<KdeProgressBackend>()?.SetDestUrlAsync($"file:///home/emi/Desktop");

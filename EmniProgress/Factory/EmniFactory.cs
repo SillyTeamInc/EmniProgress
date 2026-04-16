@@ -4,6 +4,9 @@ using EmniProgress.Providers;
 
 namespace EmniProgress.Factory;
 
+/// <summary>
+/// A factory for creating progress backends based on the available providers and their priorities.
+/// </summary>
 public static class EmniFactory
 {
     private static readonly List<IProgressBackendProvider> _providers = new()

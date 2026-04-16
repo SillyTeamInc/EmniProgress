@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Linq.Expressions;
+using System.Reflection;
 using Tmds.DBus;
 namespace EmniProgress.Backends.KDE;
 
@@ -8,6 +10,7 @@ public interface IJobViewServerV2 : IDBusObject
 {
     Task<ObjectPath> requestViewAsync(string desktopEntry, int capabilities, IDictionary<string, object> hints);
 }
+
 [DBusInterface("org.kde.JobViewV2")]
 public interface IJobViewV2 : IDBusObject
 {
@@ -20,10 +23,8 @@ public interface IJobViewV2 : IDBusObject
     Task<bool> setDescriptionFieldAsync(uint number, string name, string value);
     Task clearDescriptionFieldAsync(uint number);
     Task setSuspendedAsync(bool suspended);
-    Task<IDisposable> WatchSuspendRequestedAsync(Action handler, Action<Exception> onError);
-    Task<IDisposable> WatchResumeRequestedAsync(Action handler, Action<Exception> onError);
-    Task<IDisposable> WatchCancelRequestedAsync(Action handler, Action<Exception> onError);
 }
+
 [DBusInterface("org.kde.JobViewV3")]
 public interface IJobViewV3 : IDBusObject
 {
@@ -56,13 +57,13 @@ public sealed class KdeJob : IAsyncDisposable
     private readonly IJobViewV3 _jobV3;
     private bool _finished;
 
-    /*private IDisposable? _suspendSub;
+    private IDisposable? _suspendSub;
     private IDisposable? _resumeSub;
-    private IDisposable? _cancelSub;*/
+    private IDisposable? _cancelSub;
 
-    public Func<Task>? OnSuspendRequested { get; set; }
-    public Func<Task>? OnResumeRequested { get; set; }
-    public Func<Task>? OnCancelRequested { get; set; }
+    private Func<Task>? OnSuspendRequested { get; set; }
+    private Func<Task>? OnResumeRequested { get; set; }
+    private Func<Task>? OnCancelRequested { get; set; }
 
     private KdeJob(Connection connection, IJobViewV2 jobV2, IJobViewV3 jobV3)
     {
@@ -71,6 +72,18 @@ public sealed class KdeJob : IAsyncDisposable
         _jobV3 = jobV3;
     }
 
+    /// <summary>
+    /// Starts a new KDE job with the given parameters. The returned KdeJob object can be used to update or finish the job.
+    /// </summary>
+    /// <param name="title"></param>
+    /// <param name="description"></param>
+    /// <param name="appName"></param>
+    /// <param name="iconName"></param>
+    /// <param name="capabilities">The capabilities of the job, a bitmask of <see cref="KdeJobCapabilities"/> values.</param>
+    /// <param name="onSuspendRequested"></param>
+    /// <param name="onResumeRequested"></param>
+    /// <param name="onCancelRequested"></param>
+    /// <returns></returns>
     public static async Task<KdeJob> StartAsync(
         string title,
         string description,
@@ -100,7 +113,7 @@ public sealed class KdeJob : IAsyncDisposable
 
         ObjectPath jobPath = await serverV2.requestViewAsync(
             appName ?? string.Empty,
-            0,
+            capabilities,
             hints
         ).ConfigureAwait(false);
     
@@ -120,7 +133,72 @@ public sealed class KdeJob : IAsyncDisposable
         
         Debug.WriteLine($"[emni] KDE Job created at {jobPath} with service {uniqueOwner}");
         
+        // if someone knows a better way of doing this please contact me 
+        // https://ratted.systems/emi
+        job._cancelSub = await WatchRawSignalAsync(conn, jobPath,
+            "org.kde.JobViewV2", "cancelRequested", uniqueOwner,
+            () =>
+            {         
+                Debug.WriteLine("[emni] Cancel requested");
+                if (job.OnCancelRequested != null)
+                    _ = job.OnCancelRequested.Invoke();
+            }).ConfigureAwait(false);
+        
+        job._suspendSub = await WatchRawSignalAsync(conn, jobPath,
+            "org.kde.JobViewV2", "suspendRequested", uniqueOwner,
+            () =>
+            {
+                Debug.WriteLine("[emni] Suspend requested");
+                if (job.OnSuspendRequested != null) 
+                    _ = job.OnSuspendRequested.Invoke();
+            }).ConfigureAwait(false);   
+        
+        job._resumeSub = await WatchRawSignalAsync(conn, jobPath,
+            "org.kde.JobViewV2", "resumeRequested", uniqueOwner,
+            () =>
+            {
+                Debug.WriteLine("[emni] Resume requested");
+                if (job.OnResumeRequested != null)      
+                    _ = job.OnResumeRequested.Invoke();
+            }).ConfigureAwait(false);
+        
         return job;
+    }
+    
+    private static readonly Type? _signalHandlerType = 
+        typeof(Connection).Assembly.GetType("Tmds.DBus.Protocol.SignalHandler");
+    private static readonly MethodInfo? _watchSignalMethod = 
+        typeof(Connection).GetMethod("WatchSignalAsync", BindingFlags.Instance | BindingFlags.NonPublic);
+
+    private static async Task<IDisposable> WatchRawSignalAsync(
+        Connection conn,
+        ObjectPath path,
+        string iface,
+        string signalName,
+        string sender,
+        Action onSignal)
+    {
+        // Tmds.DBus doesn't expose signal watching for remote objects publicly :c
+        // So we have to do this cursed shit.
+        if (_signalHandlerType == null)
+            throw new InvalidOperationException("Tmds.DBus.Protocol.SignalHandler not found, library internals may have changed.");
+        if (_watchSignalMethod == null)
+            throw new InvalidOperationException("Connection.WatchSignalAsync not found, library internals may have changed.");
+
+        var parameters = _signalHandlerType.GetMethod("Invoke")!
+            .GetParameters()
+            .Select(p => Expression.Parameter(p.ParameterType))
+            .ToArray();
+
+        var handler = Expression.Lambda(
+            _signalHandlerType,
+            Expression.Call(Expression.Constant(onSignal), typeof(Action).GetMethod("Invoke")!),
+            parameters
+        ).Compile();
+
+        return await ((Task<IDisposable>)_watchSignalMethod.Invoke(conn,
+                    new object[] { path, iface, signalName, sender, handler })!
+            ).ConfigureAwait(false);
     }
     
     public Task UpdateAsync(IDictionary<string, object> properties)

@@ -2,6 +2,9 @@ using EmniProgress.Core;
 
 namespace EmniProgress.Backends.KDE;
 
+/// <summary>
+/// A progress backend that uses KDE's job system to show progress notifications in the KDE Plasma desktop environment.
+/// </summary>
 public class KdeProgressBackend : IProgressBackend
 {
     private KdeJob? _job;
@@ -12,8 +15,7 @@ public class KdeProgressBackend : IProgressBackend
     private Func<Task>? _queuedOnSuspendRequested = null;
     private Func<Task>? _queuedOnResumeRequested = null;
 
-
-    /*/// <summary>
+    /// <summary>
     /// Sets the callback to be invoked when the user requests cancellation of the job.
     /// </summary>
     /// <remarks>
@@ -71,15 +73,20 @@ public class KdeProgressBackend : IProgressBackend
             ? _queuedCapabilities | KdeJobCapabilities.Suspendable
             : _queuedCapabilities & ~KdeJobCapabilities.Suspendable;
         _queuedCapabilities = newCapabilities;
-    }*/
+    }
 
     /// <inheritdoc/>
     public async Task StartAsync(string title, string description, string appName = "", string? iconName = null)
     {
         if (_disposed) throw new ObjectDisposedException(nameof(KdeProgressBackend));
         if (_job != null) throw new InvalidOperationException("A progress notification is already running.");
-        
-        _job = await KdeJob.StartAsync(title, description, appName, iconName, _queuedCapabilities, _queuedOnCancelRequested, _queuedOnSuspendRequested, _queuedOnResumeRequested);
+
+        _job = await KdeJob.StartAsync(title, description, appName, iconName, _queuedCapabilities,
+            _queuedOnSuspendRequested, _queuedOnResumeRequested, _queuedOnCancelRequested);
+        _queuedCapabilities = 0;
+        _queuedOnCancelRequested = null;
+        _queuedOnSuspendRequested = null;
+        _queuedOnResumeRequested = null;
     }
 
     

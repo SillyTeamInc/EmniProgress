@@ -7,6 +7,7 @@
 
         <PackageId>EmniProgress</PackageId>
 
+        <PackageReadmeFile>README.md</PackageReadmeFile>
         <GenerateDocumentationFile>true</GenerateDocumentationFile>
         <PackageLicenseExpression>Unlicense</PackageLicenseExpression>
 
@@ -20,6 +21,10 @@
     <ItemGroup>
         <PackageReference Include="Tmds.DBus" Version="0.92.0" />
         <PackageReference Include="MinVer" Version="6.0.0" PrivateAssets="All" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Include="../README.md" Pack="true" PackagePath="\" />
     </ItemGroup>
 
 </Project>
